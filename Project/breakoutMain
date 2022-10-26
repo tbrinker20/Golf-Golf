@@ -1,0 +1,330 @@
+// SpaceInvaders.c
+// Runs on TM4C123
+// Jonathan Valvano and Daniel Valvano
+// This is a starter project for the EE319K Lab 10
+
+// Last Modified: 1/12/2022 
+// http://www.spaceinvaders.de/
+// sounds at http://www.classicgaming.cc/classics/spaceinvaders/sounds.php
+// http://www.classicgaming.cc/classics/spaceinvaders/playguide.php
+
+// ******* Possible Hardware I/O connections*******************
+// Slide pot pin 1 connected to ground
+// Slide pot pin 2 connected to PD2/AIN5
+// Slide pot pin 3 connected to +3.3V 
+// buttons connected to PE0-PE3
+// 32*R resistor DAC bit 0 on PB0 (least significant bit)
+// 16*R resistor DAC bit 1 on PB1
+// 8*R resistor DAC bit 2 on PB2 
+// 4*R resistor DAC bit 3 on PB3
+// 2*R resistor DAC bit 4 on PB4
+// 1*R resistor DAC bit 5 on PB5 (most significant bit)
+// LED on PD1
+// LED on PD0
+
+
+#include <stdint.h>
+#include "../inc/tm4c123gh6pm.h"
+#include "ST7735.h"
+#include "Print.h"
+#include "Random.h"
+#include "TExaS.h"
+#include "ADC.h"
+#include "Images.h"
+#include "Sound.h"
+#include "Timer1.h"
+#include "line.h"
+//#include "sprites.h"
+#include "images.h"
+
+#define PF1       (*((volatile uint32_t *)0x40025008))
+#define MAXBIRDS 15
+
+//Globals
+
+//flags(might have to reinitalize in levels but shouldnt have to)
+uint8_t needDrawBirds;
+
+//structs
+typedef enum {alive, dying, dead} status_t; 
+struct sprite{
+	int32_t x,y; //x: 0-127, y:0-159
+	int32_t vx,vy;
+	int16_t h,w; 
+	const uint16_t* imgPt;
+	status_t life;
+};
+typedef struct sprite sprite_t;
+
+//sprite declarations
+sprite_t Birds[MAXBIRDS]; 
+
+
+//prototypes
+void DisableInterrupts(void); // Disable interrupts
+void EnableInterrupts(void);  // Enable interrupts
+void Delay100ms(uint32_t count); // time delay in 0.1 seconds
+
+
+//Initialization Functions
+void SysTick_Init(uint32_t period){
+NVIC_ST_CTRL_R = 0x00; //turning off interrupts during initialization
+NVIC_ST_RELOAD_R = period-1; //changing reload to period
+NVIC_ST_CURRENT_R = 0; //writing to control register to set ctrl reg value to 0 so on next tick timer starts counting down from new reload value just set
+//NVIC_PRI3_R = (NVIC_PRI3_R&0x0FFFFFFF)|0x40000000; //priority 2
+NVIC_ST_CTRL_R = 0x07; // activating clock to start ticking and operating @ 80 MHz clock and can start interuptting
+}
+
+void PortF_Init(void){
+  SYSCTL_RCGCGPIO_R |= 0x20;      // activate port F
+  while((SYSCTL_PRGPIO_R&0x20) != 0x20){};
+  GPIO_PORTF_DIR_R |=  0x0E;   // output on PF3,2,1 (built-in LED)
+  GPIO_PORTF_PUR_R |= 0x10;
+  GPIO_PORTF_DEN_R |=  0x1E;   // enable digital I/O on PF
+}
+
+void PortE_Init(void){
+SYSCTL_RCGCGPIO_R |= 0x10;
+__nop();       // extra time to stabilize
+ __nop();       // extra time to stabilize
+ __nop();         // extra time to stabilize
+ __nop();  
+GPIO_PORTE_DIR_R &= ~0x0E;    // (c) make PB4 input
+  GPIO_PORTE_DEN_R |= 0x0E;     //     enable digital I/O on PB4
+GPIO_PORTE_IS_R &= ~0x0E;     // (d) PE3-1 is edge-sensitive
+  GPIO_PORTE_IBE_R &= ~0x0E;    //     PB4 is not both edges
+  GPIO_PORTE_IEV_R &= ~0x0E;    //     PB4 falling edge event
+GPIO_PORTE_ICR_R = 0x0E;      // (e) clear flag4
+ GPIO_PORTE_IM_R |= 0x0E;      // (f) arm interrupt on PB4
+NVIC_PRI1_R = (NVIC_PRI1_R&0xFFFFF00F)|0x00000020; // priority 1
+NVIC_EN0_R = 0x00000010;      // (h) enable interrupt 0 in NVIC
+}
+
+
+void Birds_Init()
+{
+		int i;
+		ST7735_FillScreen(0x0000); // set screen to green
+	  for(i=0; i<10; i++){
+			Birds[i].x = 10*i;
+			Birds[i].y = 10 ;
+			Birds[i].imgPt = whiteBall;
+			Birds[i].h = 8;
+			Birds[i].w = 8;
+			Birds[i].life = alive;
+			Birds[i].vx = (Random() %5) -2; //-2 to +2 pixels/frame
+			Birds[i].vy = (Random() %3); // 0 to +2 pixels/frame
+		}
+		for(i=10;i<MAXBIRDS; i++)
+		{
+			Birds[i].life = dead;
+		}
+	}
+	
+	
+
+
+//}
+
+void GPIOPortE_Handler(void){
+	//only comes in here when user presses button and failed current level 
+
+}
+
+
+//void redraw(void){
+//			//redrawing cursor first
+//			ST7735_DrawBitmap(oldXCoord,oldYCoord,cursorGreen,5,5);
+//			ST7735_DrawBitmap(xCoord,yCoord,cursorMain,5,5);
+//			//redrawing all obstaceles
+//			for(int i=0; i<MAXOBSTACLES; i++){
+//				ST7735_DrawBitmap(Obstacles[i].x,Obstacles[i].y,Obstacles[i].imagePtr,Obstacles[i].w,Obstacles[i].h);
+//				//ST7735_DrawBitmap(100,100,hole,12,12);		//redraw obstacles
+//				//ST7735_DrawBitmap(75,75,Pond1,50,20);
+//			}
+////			ST7735_DrawCharS(0,4,0x53,0xFFFF,0xF8FF,4);
+//			//if user moving cursor and drew one point, ensures that 1st point is redrawn again and again
+//			if(numLines >= 0 && drewFirstPnt)
+//			{
+//				ST7735_DrawSmallCircle(Lines[numLines].x1,Lines[numLines].y1,0x0000);
+//			}
+//			//redrawing lines and points if there are lines and points
+//			for(int i = 0; i<numLines; i++)
+//			{
+//				ST7735_DrawSmallCircle(Lines[i].x1,Lines[i].y1,0x0000);
+//				ST7735_DrawSmallCircle(Lines[i].x2,Lines[i].y2,0x0000);
+//				drawLine(Lines,i);
+//			}
+//			//redraws balls if there's balls to redraw(aka needDrawBall flag raised)
+//			if(needDrawBall && drewABall)
+//			{
+//				drawBalls(Balls);
+//			}
+//			needDrawCursor = 0;
+//		}
+
+//		
+		
+//void Timer1A_Handler(void){
+//	newBallFlag = 1;
+//	TIMER1_ICR_R = TIMER_ICR_TATOCINT;
+//}
+
+void Move(void){
+	int i;
+	for(i=0; i< MAXBIRDS; i++){
+		if(Birds[i].life == alive){
+			Birds[i].x += Birds[i].vx;
+			Birds[i].y += Birds[i].vy;
+			//bird out of bounds
+			if(Birds[i].x < 0){
+				Birds[i].life = dying;
+			}
+			if(Birds[i].x > 127 - Birds[i].w){
+				Birds[i].life = dying;
+			}
+			if(Birds[i].y < 0 + Birds[i].h){
+				Birds[i].life = dying;
+			}
+			if(Birds[i].y > 159){
+				Birds[i].life = dying;
+			}
+		}
+}
+	needDrawBirds = 1;
+}
+void Draw(void){
+	int i;
+	for(i=0; i< MAXBIRDS; i++){
+		if(Birds[i].life == alive){
+			ST7735_DrawBitmap(Birds[i].x,Birds[i].y,Birds[i].imgPt,Birds[i].w,Birds[i].h);
+		}
+		if(Birds[i].life == dying ){
+			Birds[i].imgPt = blackBall;
+			ST7735_DrawBitmap(Birds[i].x,Birds[i].y,Birds[i].imgPt,Birds[i].w,Birds[i].h);
+			Birds[i].life = dead;
+		}
+	}
+}
+
+
+void SysTick_Handler(void){ // every 100 ms
+		Move();
+	}
+
+int main(void){
+  DisableInterrupts();
+  TExaS_Init(NONE);       // Bus clock is 80 MHz
+  ST7735_InitR(INITR_REDTAB);
+  ADC_Init();    // initialize to sample ADC
+  PortF_Init();
+	PortE_Init();
+  SysTick_Init(80000000/30); // Interrupt at 30Hz
+	Birds_Init();
+	EnableInterrupts();
+	//Timer1_Init(80000000,2); //lower priority(higher num) than sound
+	while(1){
+			if(needDrawBirds){
+				Draw();
+				needDrawBirds = 0;
+		}
+}
+
+
+}
+
+
+
+
+
+
+
+
+
+----------------------------------------------------------------------------------------------------------------------
+Breeakout Ball Draw and Movement, and init w structs
+
+
+
+//structs
+typedef enum {alive, dying, dead} status_t; 
+//struct sprite{
+//	int32_t x,y; //x: 0-127, y:0-159
+//	//int32_t vx,vy;
+//	int16_t h,w; 
+//	const uint16_t* imgPt;
+//	status_t life;
+//};
+//typedef struct sprite sprite_t;
+
+//struct balls{
+//	int32_t x,y; //x: 0-127, y:0-159
+//	int16_t h,w; 
+//	const uint16_t* imgPt;
+//	status_t life;
+//};
+//typedef struct balls ball_t;
+
+
+
+//sprite declarations
+//balls_t Balls[MAXBALLS];
+
+
+
+//void Balls_Init()
+//{
+//		int i;
+//		ST7735_FillScreen(0x0000); // set screen to green
+//	  for(i=0; i<10; i++){
+//			Balls[i].x = 10*i;
+//			Balls[i].y = 10 ;
+//			Balls[i].imgPt = whiteBall;
+//			Balls[i].h = 8;
+//			Balls[i].w = 8;
+//			Balls[i].life = alive;
+//		}
+//		for(i=10;i<MAXBALLS; i++)
+//		{
+//			Balls[i].life = dead;
+//		}
+//	}
+
+
+//void Move(void){
+//	int i;
+//	for(i=0; i< MAXBALLS; i++){
+//		if(Balls[i].life == alive){
+//			//Balls[i].x += Balls[i].vx;
+//			Balls[i].y += 1;
+//			//bird out of bounds
+//			if(Balls[i].x < 0){
+//				Balls[i].life = dying;
+//			}
+//			if(Balls[i].x > 127 - Balls[i].w){
+//				Balls[i].life = dying;
+//			}
+//			if(Balls[i].y < 0 + Balls[i].h){
+//				Balls[i].life = dying;
+//			}
+//			if(Balls[i].y > 159){
+//				Balls[i].life = dying;
+//			}
+//		}
+//}
+//	needDrawBalls = 1;
+//}
+//void Draw(void){
+//	int i;
+//	for(i=0; i< MAXBALLS; i++){
+//		if(Balls[i].life == alive){
+//			ST7735_DrawBitmap(Balls[i].x,Balls[i].y,Balls[i].imgPt,Balls[i].w,Balls[i].h);
+//		}
+//		if(Balls[i].life == dying ){
+//			Balls[i].imgPt = blackBall;
+//			ST7735_DrawBitmap(Balls[i].x,Balls[i].y,Balls[i].imgPt,Balls[i].w,Balls[i].h);
+//			Balls[i].life = dead;
+//		}
+//	}
+//}
+

@@ -1,0 +1,319 @@
+
+
+
+ARM Macro Assembler    Page 1 
+
+
+    1 00000000         ; LCD.s
+    2 00000000         ; Student names: change this to your names or look very 
+                       silly
+    3 00000000         ; Last modification date: change this to the last modifi
+                       cation date or look very silly
+    4 00000000         
+    5 00000000         ; Runs on TM4C123
+    6 00000000         ; Use SSI0 to send an 8-bit code to the ST7735 160x128 p
+                       ixel LCD.
+    7 00000000         
+    8 00000000         ; As part of Lab 7, students need to implement these wri
+                       tecommand and writedata
+    9 00000000         ; This driver assumes two low-level LCD functions
+   10 00000000         
+   11 00000000         ; Backlight (pin 10) connected to +3.3 V
+   12 00000000         ; MISO (pin 9) unconnected
+   13 00000000         ; SCK (pin 8) connected to PA2 (SSI0Clk)
+   14 00000000         ; MOSI (pin 7) connected to PA5 (SSI0Tx)
+   15 00000000         ; TFT_CS (pin 6) connected to PA3 (SSI0Fss)
+   16 00000000         ; CARD_CS (pin 5) unconnected
+   17 00000000         ; Data/Command (pin 4) connected to PA6 (GPIO)
+   18 00000000         ; RESET (pin 3) connected to PA7 (GPIO)
+   19 00000000         ; VCC (pin 2) connected to +3.3 V
+   20 00000000         ; Gnd (pin 1) connected to ground
+   21 00000000         
+   22 00000000 400043FC 
+                       GPIO_PORTA_DATA_R
+                               EQU              0x400043FC
+   23 00000000 40008008 
+                       SSI0_DR_R
+                               EQU              0x40008008
+   24 00000000 4000800C 
+                       SSI0_SR_R
+                               EQU              0x4000800C
+   25 00000000         
+   26 00000000                 EXPORT           writecommand
+   27 00000000                 EXPORT           writedata
+   28 00000000         
+   29 00000000                 AREA             |.text|, CODE, READONLY, ALIGN=
+2
+   30 00000000                 THUMB
+   31 00000000                 ALIGN
+   32 00000000         
+   33 00000000         ; The Data/Command pin must be valid when the eighth bit
+                        is
+   34 00000000         ; sent.  The SSI module has hardware input and output FI
+                       FOs
+   35 00000000         ; that are 8 locations deep.  Based on the observation t
+                       hat
+   36 00000000         ; the LCD interface tends to send a few commands and the
+                       n a
+   37 00000000         ; lot of data, the FIFOs are not used when writing
+   38 00000000         ; commands, and they are used when writing data.  This
+   39 00000000         ; ensures that the Data/Command pin status matches the b
+                       yte
+   40 00000000         ; that is actually being transmitted.
+   41 00000000         ; The write command operation waits until all data has b
+                       een
+   42 00000000         ; sent, configures the Data/Command pin for commands, se
+
+
+
+ARM Macro Assembler    Page 2 
+
+
+                       nds
+   43 00000000         ; the command, and then waits for the transmission to
+   44 00000000         ; finish.
+   45 00000000         ; The write data operation waits until there is room in 
+                       the
+   46 00000000         ; transmit FIFO, configures the Data/Command pin for dat
+                       a,
+   47 00000000         ; and then adds the data to the transmit FIFO.
+   48 00000000         ; NOTE: These functions will crash or stall indefinitely
+                        if
+   49 00000000         ; the SSI0 module is not initialized and enabled.
+   50 00000000         
+   51 00000000         ; This is a helper function that sends an 8-bit command 
+                       to the LCD.
+   52 00000000         ; Input: R0  8-bit command to transmit
+   53 00000000         ; Output: none
+   54 00000000         ; Assumes: SSI0 and port A have already been initialized
+                        and enabled
+   55 00000000         writecommand
+   56 00000000         ;; --UUU-- Code to write a command to the LCD
+   57 00000000         ;1) Read SSI0_SR_R and check bit 4, 
+   58 00000000         ;2) If bit 4 is high, loop back to step 1 (wait for BUSY
+                        bit to be low)
+   59 00000000         ;3) Clear D/C=PA6 to zero
+   60 00000000         ;4) Write the command to SSI0_DR_R
+   61 00000000         ;5) Read SSI0_SR_R and check bit 4, 
+   62 00000000         ;6) If bit 4 is high, loop back to step 5 (wait for BUSY
+                        bit to be low)
+   63 00000000         
+   64 00000000 B4F0            PUSH{R4-R7}
+   65 00000002         ;steps 1,2
+   66 00000002         wcLoop
+   67 00000002 4C15            LDR              R4, = SSI0_SR_R
+   68 00000004 6825            LDR              R5, [R4]
+   69 00000006 F005 0510       AND              R5, #0x10
+   70 0000000A EA4F 1515       LSR              R5,#4
+   71 0000000E 2D01            CMP              R5, #1
+   72 00000010 D0F7            BEQ              wcLoop
+   73 00000012         ;3)clearing PA6 to 0(distingushes btw data vs command in
+                        data register bc using same register and both data and 
+                       command are 8 bits)
+   74 00000012 4D12            LDR              R5, =GPIO_PORTA_DATA_R
+   75 00000014 682E            LDR              R6, [R5]
+   76 00000016 F026 0640       BIC              R6, #0x40   ;tells it that comm
+                                                            and is coming by ch
+                                                            anging PA6
+   77 0000001A 602E            STR              R6,[R5]
+   78 0000001C         ;Step 4) Writing cmd to DR_R(data reg)
+   79 0000001C 4D10            LDR              R5, =SSI0_DR_R
+   80 0000001E 7028            STRB             R0, [R5]
+   81 00000020         ;Step 5,6 (ensuring cmd is fully executed, only way for 
+                       it to get out of this loop)
+   82 00000020         wcLoop2
+   83 00000020 4C0D            LDR              R4, =SSI0_SR_R
+   84 00000022 6825            LDR              R5, [R4]
+   85 00000024 F005 0510       AND              R5, #0x10
+   86 00000028 EA4F 1515       LSR              R5,#4
+   87 0000002C 2D01            CMP              R5, #1
+   88 0000002E D0F7            BEQ              wcLoop2
+
+
+
+ARM Macro Assembler    Page 3 
+
+
+   89 00000030         ;restoring reg and branching back to main program
+   90 00000030 BCF0            POP{R4-R7}
+   91 00000032 4770            BX               LR          ;   return
+   92 00000034         
+   93 00000034         
+   94 00000034         
+   95 00000034         ; This is a helper function that sends an 8-bit data to 
+                       the LCD.
+   96 00000034         ; Input: R0  8-bit data to transmit
+   97 00000034         ; Output: none
+   98 00000034         ; Assumes: SSI0 and port A have already been initialized
+                        and enabled
+   99 00000034         writedata
+  100 00000034         ;; --UUU-- Code to write data to the LCD
+  101 00000034         ;1) Read SSI0_SR_R and check bit 1, 
+  102 00000034         ;2) If bit 1 is low loop back to step 1 (wait for TNF bi
+                       t to be high)
+  103 00000034         ;3) Set D/C=PA6 to one
+  104 00000034         ;4) Write the 8-bit data to SSI0_DR_R
+  105 00000034         
+  106 00000034 B4F0            PUSH{R4-R7}
+  107 00000036         ;steps 1,2
+  108 00000036         wdloop
+  109 00000036 4C08            LDR              R4, = SSI0_SR_R
+  110 00000038 6825            LDR              R5, [R4]
+  111 0000003A F005 0502       AND              R5, #0x02
+  112 0000003E EA4F 0555       LSR              R5,#1
+  113 00000042 2D00            CMP              R5, #0
+  114 00000044 D0F7            BEQ              wdloop
+  115 00000046         
+  116 00000046         ;Set D/C=PA6 to one
+  117 00000046 4D05            LDR              R5, =GPIO_PORTA_DATA_R
+  118 00000048 682E            LDR              R6, [R5]
+  119 0000004A F046 0640       ORR              R6,#0x40
+  120 0000004E 602E            STR              R6,[R5]
+  121 00000050         
+  122 00000050         ;Step 4) Writing data to DR_R(data reg)
+  123 00000050 4D03            LDR              R5, =SSI0_DR_R
+  124 00000052 7028            STRB             R0, [R5]
+  125 00000054         
+  126 00000054         ;restoring reg and branching back to main program
+  127 00000054 BCF0            POP{R4-R7}
+  128 00000056         
+  129 00000056 4770            BX               LR          ;return
+  130 00000058         
+  131 00000058         
+  132 00000058         
+  133 00000058         ;***************************************************
+  134 00000058         ; This is a library for the Adafruit 1.8" SPI display.
+  135 00000058         ; This library works with the Adafruit 1.8" TFT Breakout
+                        w/SD card
+  136 00000058         ; ----> http://www.adafruit.com/products/358
+  137 00000058         ; as well as Adafruit raw 1.8" TFT display
+  138 00000058         ; ----> http://www.adafruit.com/products/618
+  139 00000058         ;
+  140 00000058         ; Check out the links above for our tutorials and wiring
+                        diagrams
+  141 00000058         ; These displays use SPI to communicate, 4 or 5 pins are
+                        required to
+
+
+
+ARM Macro Assembler    Page 4 
+
+
+  142 00000058         ; interface (RST is optional)
+  143 00000058         ; Adafruit invests time and resources providing this ope
+                       n source code,
+  144 00000058         ; please support Adafruit and open-source hardware by pu
+                       rchasing
+  145 00000058         ; products from Adafruit!
+  146 00000058         ;
+  147 00000058         ; Written by Limor Fried/Ladyada for Adafruit Industries
+                       .
+  148 00000058         ; MIT license, all text above must be included in any re
+                       distribution
+  149 00000058         ;****************************************************
+  150 00000058         
+  151 00000058                 ALIGN                        ; make sure the end
+                                                             of this section is
+                                                             aligned
+  152 00000058                 END                          ; end of file
+              4000800C 
+              400043FC 
+              40008008 
+Command Line: --debug --xref --diag_suppress=9931 --cpu=Cortex-M4 --apcs=interw
+ork --depend=.\lcd.d -o.\lcd.o -I.\RTE\_SpaceInvaders -IC:\Users\tbrinker20\App
+Data\Local\Arm\Packs\ARM\CMSIS\5.8.0\CMSIS\Core\Include -IC:\Users\tbrinker20\A
+ppData\Local\Arm\Packs\Keil\TM4C_DFP\1.1.0\Device\Include\TM4C123 --predefine="
+__EVAL SETA 1" --predefine="__UVISION_VERSION SETA 536" --predefine="_RTE_ SETA
+ 1" --predefine="TM4C123GH6PM SETA 1" --predefine="_RTE_ SETA 1" --list=.\lcd.l
+st LCD.s
+
+
+
+ARM Macro Assembler    Page 1 Alphabetic symbol ordering
+Relocatable symbols
+
+.text 00000000
+
+Symbol: .text
+   Definitions
+      At line 29 in file LCD.s
+   Uses
+      None
+Comment: .text unused
+wcLoop 00000002
+
+Symbol: wcLoop
+   Definitions
+      At line 66 in file LCD.s
+   Uses
+      At line 72 in file LCD.s
+Comment: wcLoop used once
+wcLoop2 00000020
+
+Symbol: wcLoop2
+   Definitions
+      At line 82 in file LCD.s
+   Uses
+      At line 88 in file LCD.s
+Comment: wcLoop2 used once
+wdloop 00000036
+
+Symbol: wdloop
+   Definitions
+      At line 108 in file LCD.s
+   Uses
+      At line 114 in file LCD.s
+Comment: wdloop used once
+writecommand 00000000
+
+Symbol: writecommand
+   Definitions
+      At line 55 in file LCD.s
+   Uses
+      At line 26 in file LCD.s
+Comment: writecommand used once
+writedata 00000034
+
+Symbol: writedata
+   Definitions
+      At line 99 in file LCD.s
+   Uses
+      At line 27 in file LCD.s
+Comment: writedata used once
+6 symbols
+
+
+
+ARM Macro Assembler    Page 1 Alphabetic symbol ordering
+Absolute symbols
+
+GPIO_PORTA_DATA_R 400043FC
+
+Symbol: GPIO_PORTA_DATA_R
+   Definitions
+      At line 22 in file LCD.s
+   Uses
+      At line 74 in file LCD.s
+      At line 117 in file LCD.s
+
+SSI0_DR_R 40008008
+
+Symbol: SSI0_DR_R
+   Definitions
+      At line 23 in file LCD.s
+   Uses
+      At line 79 in file LCD.s
+      At line 123 in file LCD.s
+
+SSI0_SR_R 4000800C
+
+Symbol: SSI0_SR_R
+   Definitions
+      At line 24 in file LCD.s
+   Uses
+      At line 67 in file LCD.s
+      At line 83 in file LCD.s
+      At line 109 in file LCD.s
+
+3 symbols
+345 symbols in table
